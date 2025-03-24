@@ -1,7 +1,7 @@
 package fuzhu
 
 import (
-	"fmt"
+	"gopr/fuzhu/logger"
 	"os"
 	"os/signal"
 	"sync"
@@ -17,7 +17,8 @@ func handleInterrupt() {
 	signal.Notify(quitChan, os.Interrupt, syscall.SIGTERM)
 	<-quitChan
 	outputMutex.Lock()
-	fmt.Println("\n正在关闭代理服务器...")
+	logger.Warn("正在关闭代理服务器...")
+	logger.Sync()
 	outputMutex.Unlock()
 	close(quitChan)
 	os.Exit(0)

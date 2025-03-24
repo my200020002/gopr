@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"flag"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"gopr/fuzhu"
+	"gopr/fuzhu/logger"
 
 	"github.com/elazarl/goproxy"
 )
@@ -33,7 +33,7 @@ func main() {
 	}
 	for _, pattern := range patterns {
 		if err := regexManager.AddPattern(pattern); err != nil {
-			log.Printf("添加正则表达式失败: %v", err)
+			logger.Errorf("添加正则表达式失败: %v", err)
 		}
 	}
 	// ---初始化正则表达式管理器---
@@ -45,7 +45,7 @@ func main() {
 	if *upstreamProxyFlag != "" {
 		upstreamProxy, err := url.Parse(*upstreamProxyFlag)
 		if err != nil {
-			log.Fatal("解析上游代理地址失败:", err)
+			logger.Fatal("解析上游代理地址失败:", err)
 		}
 
 		proxy.Tr = &http.Transport{
@@ -64,7 +64,7 @@ func main() {
 			IdleConnTimeout:     90 * time.Second, // 空闲连接超时时间
 			DisableKeepAlives:   false,            // 启用 keep-alive
 		}
-		log.Printf("已启用上游代理: %s\n", *upstreamProxyFlag)
+		logger.Infof("已启用上游代理: %s\n", *upstreamProxyFlag)
 	} else {
 		// 即使不使用上游代理，也优化本地代理的传输设置
 		proxy.Tr = &http.Transport{
@@ -86,20 +86,20 @@ func main() {
 	// 加载自定义证书
 	caCert, err := os.ReadFile("ca.crt")
 	if err != nil {
-		log.Fatal("读取CA证书失败:", err)
+		logger.Fatal("读取CA证书失败:", err)
 	}
 	caKey, err := os.ReadFile("ca.key")
 	if err != nil {
-		log.Fatal("读取CA私钥失败:", err)
+		logger.Fatal("读取CA私钥失败:", err)
 	}
 
 	// 设置HTTPS支持
 	ca, err := tls.X509KeyPair(caCert, caKey)
 	if err != nil {
-		log.Fatal("加载证书失败:", err)
+		logger.Fatal("加载证书失败:", err)
 	}
 	if ca.Leaf, err = x509.ParseCertificate(ca.Certificate[0]); err != nil {
-		log.Fatal("解析证书失败:", err)
+		logger.Fatal("解析证书失败:", err)
 	}
 	goproxy.GoproxyCa = ca
 	proxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
@@ -110,12 +110,12 @@ func main() {
 			// 读取 WebSocket 请求体
 			body, err := io.ReadAll(req.Body)
 			if err == nil && len(body) > 0 {
-				log.Printf("[WebSocket发送] %s %s\n内容: %s\n", req.Method, req.URL, string(body))
+				logger.Printf("[WebSocket发送] %s %s\n内容: %s\n", req.Method, req.URL, string(body))
 				// 重新设置请求体，因为已经被读取
 				req.Body = io.NopCloser(bytes.NewBuffer(body))
 			}
 		}
-		// log.Printf("[请求] %s %s\n", req.Method, req.URL)
+		// logger.Printf("[请求] %s %s\n", req.Method, req.URL)
 		return req, nil
 	})
 
@@ -125,7 +125,7 @@ func main() {
 			// 读取 WebSocket 响应体
 			body, err := io.ReadAll(resp.Body)
 			if err == nil && len(body) > 0 {
-				log.Printf("[WebSocket接收] %s %s -> %d\n内容: %s\n",
+				logger.Printf("[WebSocket接收] %s %s -> %d\n内容: %s\n",
 					ctx.Req.Method, ctx.Req.URL, resp.StatusCode, string(body))
 				// 重新设置响应体
 				resp.Body = io.NopCloser(bytes.NewBuffer(body))
@@ -137,7 +137,7 @@ func main() {
 				if err == nil {
 					// 进行正则匹配
 					if matches := regexManager.MatchAll(body); len(matches) > 0 {
-						log.Printf("匹配到的正则: %v", matches)
+						logger.Printf("匹配到的正则: %v", matches)
 					}
 					// 重新设置响应体
 					resp.Body = io.NopCloser(bytes.NewBuffer(body))
@@ -152,7 +152,7 @@ func main() {
 					// 检查是否为图片
 					if fuzhu.IsImageResponse(resp) {
 						if err := fuzhu.SaveImage(body, resp.Request.URL.String()); err == nil {
-							log.Printf("已保存图片: %s\n", resp.Request.URL)
+							logger.Printf("已保存图片: %s\n", resp.Request.URL)
 						}
 					}
 					// 重新设置响应体
@@ -161,10 +161,10 @@ func main() {
 			}
 		}
 
-		log.Printf("[响应] %s %s -> %d\n", ctx.Req.Method, ctx.Req.URL, resp.StatusCode)
+		logger.Printf("[响应] %s %s -> %d\n", ctx.Req.Method, ctx.Req.URL, resp.StatusCode)
 		return resp
 	})
 
-	log.Println("启动代理服务器在 :8889...")
-	log.Fatal(http.ListenAndServe(":8889", proxy))
+	logger.Print("启动代理服务器在 :8889...")
+	logger.Fatal(http.ListenAndServe(":8889", proxy))
 }
