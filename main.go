@@ -131,6 +131,16 @@ func main() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(body))
 			}
 		}
+		// 添加调试信息
+		if ctx == nil {
+			logger.Debug("ctx is nil")
+			return resp
+		}
+		if ctx.Req == nil {
+			logger.Debugf("ctx.Req is nil, ctx.Error: %v", ctx.Error)
+			return resp
+		}
+
 		if false {
 			if resp != nil {
 				body, err := io.ReadAll(resp.Body)
@@ -160,8 +170,9 @@ func main() {
 				}
 			}
 		}
-
-		logger.Printf("[res] %s %s -> %d", ctx.Req.Method, ctx.Req.URL, resp.StatusCode)
+		if resp != nil {
+			logger.Printf("[res] %s %s -> %d", ctx.Req.Method, ctx.Req.URL, resp.StatusCode)
+		}
 		return resp
 	})
 
