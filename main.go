@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"gopr/fuzhu"
@@ -24,14 +25,11 @@ func main() {
 	upstreamProxyFlag := flag.String("p", "", "上游代理地址 (例如: http://proxy:port)")
 	verboseFlag := flag.Bool("v", false, "详细信息")
 	flag.Parse()
+	go processResponseLogs()
 	// +++初始化正则表达式管理器+++
 	regexManager := fuzhu.NewRegexManager()
-	patterns := []string{
-		`pattern1`,
-		`pattern2`,
-		// ... 更多模式
-	}
-	for _, pattern := range patterns {
+
+	for _, pattern := range fuzhu.SecretPatterns {
 		if err := regexManager.AddPattern(pattern); err != nil {
 			logger.Errorf("添加正则表达式失败: %v", err)
 		}
@@ -106,76 +104,116 @@ func main() {
 
 	// 监听所有请求
 	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-		if req.Header.Get("Upgrade") == "websocket" {
-			// 读取 WebSocket 请求体
-			body, err := io.ReadAll(req.Body)
-			if err == nil && len(body) > 0 {
-				logger.Printf("[WebSocket发送] %s %s\n内容: %s\n", req.Method, req.URL, string(body))
-				// 重新设置请求体，因为已经被读取
-				req.Body = io.NopCloser(bytes.NewBuffer(body))
-			}
-		}
+		// if req.Header.Get("Upgrade") == "websocket" {
+		// 	// 读取 WebSocket 请求体
+		// 	body, err := io.ReadAll(req.Body)
+		// 	if err == nil && len(body) > 0 {
+		// 		logger.Printf("[WebSocket发送] %s %s\n内容: %s\n", req.Method, req.URL, string(body))
+		// 		// 重新设置请求体，因为已经被读取
+		// 		req.Body = io.NopCloser(bytes.NewBuffer(body))
+		// 	}
+		// }
 		// logger.Printf("[请求] %s %s\n", req.Method, req.URL)
 		return req, nil
 	})
 
 	// 监听所有响应
 	proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-		if resp != nil && resp.Header.Get("Upgrade") == "websocket" {
-			// 读取 WebSocket 响应体
-			body, err := io.ReadAll(resp.Body)
-			if err == nil && len(body) > 0 {
-				logger.Printf("[WebSocket接收] %s %s -> %d\n内容: %s\n",
-					ctx.Req.Method, ctx.Req.URL, resp.StatusCode, string(body))
-				// 重新设置响应体
-				resp.Body = io.NopCloser(bytes.NewBuffer(body))
-			}
-		}
-		// 添加调试信息
-		if ctx == nil {
-			logger.Debug("ctx is nil")
+		if resp == nil || ctx == nil || ctx.Req == nil {
 			return resp
 		}
-		if ctx.Req == nil {
-			logger.Debugf("ctx.Req is nil, ctx.Error: %v", ctx.Error)
+		contentType := resp.Header.Get("Content-Type")
+		if shouldSkipContentType(contentType) {
 			return resp
 		}
-
-		if false {
-			if resp != nil {
-				body, err := io.ReadAll(resp.Body)
-				if err == nil {
-					// 进行正则匹配
-					if matches := regexManager.MatchAll(body); len(matches) > 0 {
-						logger.Printf("匹配到的正则: %v", matches)
-					}
-					// 重新设置响应体
-					resp.Body = io.NopCloser(bytes.NewBuffer(body))
-				}
-			}
+		if resp.StatusCode != 200 {
+			return resp
 		}
-		if false {
-			if resp != nil {
-				// 读取响应体
-				body, err := io.ReadAll(resp.Body)
-				if err == nil {
-					// 检查是否为图片
-					if fuzhu.IsImageResponse(resp) {
-						if err := fuzhu.SaveImage(body, resp.Request.URL.String()); err == nil {
-							logger.Printf("已保存图片: %s\n", resp.Request.URL)
-						}
-					}
-					// 重新设置响应体
-					resp.Body = io.NopCloser(bytes.NewBuffer(body))
-				}
-			}
+		// 读取响应体
+		var body []byte
+		if resp.Body != nil {
+			body, _ = io.ReadAll(resp.Body)
+			// 重新设置响应体
+			resp.Body = io.NopCloser(bytes.NewBuffer(body))
 		}
-		if resp != nil {
-			logger.Printf("[res] %s %s -> %d", ctx.Req.Method, ctx.Req.URL, resp.StatusCode)
+		// 将数据发送到队列
+		select {
+		case responseQueue <- ResponseData{
+			Method:     ctx.Req.Method,
+			URL:        ctx.Req.URL.String(),
+			StatusCode: resp.StatusCode,
+			Body:       body,
+		}:
+		default:
+			// 如果队列满了，记录一个警告但不阻塞
+			logger.Warn("Response queue is full, skipping log")
 		}
+		// if false {
+		// 	if resp != nil {
+		// 		body, err := io.ReadAll(resp.Body)
+		// 		if err == nil {
+		// 			// 进行正则匹配
+		// 			if matches := regexManager.MatchAll(body); len(matches) > 0 {
+		// 				logger.Printf("匹配到的正则: %v", matches)
+		// 			}
+		// 			// 重新设置响应体
+		// 			resp.Body = io.NopCloser(bytes.NewBuffer(body))
+		// 		}
+		// 	}
+		// }
+		// if false {
+		// 	if resp != nil {
+		// 		// 读取响应体
+		// 		body, err := io.ReadAll(resp.Body)
+		// 		if err == nil {
+		// 			// 检查是否为图片
+		// 			if fuzhu.IsImageResponse(resp) {
+		// 				if err := fuzhu.SaveImage(body, resp.Request.URL.String()); err == nil {
+		// 					logger.Printf("已保存图片: %s\n", resp.Request.URL)
+		// 				}
+		// 			}
+		// 			// 重新设置响应体
+		// 			resp.Body = io.NopCloser(bytes.NewBuffer(body))
+		// 		}
+		// 	}
+		// }
 		return resp
 	})
 
 	logger.Print("启动代理服务器在 :8889...")
 	logger.Fatal(http.ListenAndServe(":8889", proxy))
+}
+
+type ResponseData struct {
+	Method     string
+	URL        string
+	StatusCode int
+	Body       []byte
+}
+
+var responseQueue = make(chan ResponseData, 100000)
+
+func processResponseLogs() {
+	for data := range responseQueue {
+		bodylength := max(len(data.Body), 0)
+		logger.Printf("[res] %s %s -> [%d] %d", data.Method, data.URL, data.StatusCode, bodylength)
+	}
+}
+func shouldSkipContentType(contentType string) bool {
+	skipTypes := []string{
+		"image/",
+		"font/",
+		"text/css",
+		"video/",
+		"audio/",
+		"application/font",
+		"application/x-font",
+	}
+
+	for _, skipType := range skipTypes {
+		if strings.HasPrefix(contentType, skipType) {
+			return true
+		}
+	}
+	return false
 }

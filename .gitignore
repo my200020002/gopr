@@ -26,3 +26,4 @@ go.work.sum
 *.crt
 *.key
 logs/
+fuzhu/secret.go
