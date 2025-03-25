@@ -19,15 +19,17 @@ import (
 	"github.com/elazarl/goproxy"
 )
 
+var regexManager = fuzhu.NewRegexManager()
+
 func main() {
 
 	// 添加命令行参数支持
 	upstreamProxyFlag := flag.String("p", "", "上游代理地址 (例如: http://proxy:port)")
 	verboseFlag := flag.Bool("v", false, "详细信息")
 	flag.Parse()
+
 	go processResponseLogs()
 	// +++初始化正则表达式管理器+++
-	regexManager := fuzhu.NewRegexManager()
 
 	for _, pattern := range fuzhu.SecretPatterns {
 		if err := regexManager.AddPattern(pattern); err != nil {
@@ -62,7 +64,7 @@ func main() {
 			IdleConnTimeout:     90 * time.Second, // 空闲连接超时时间
 			DisableKeepAlives:   false,            // 启用 keep-alive
 		}
-		logger.Infof("已启用上游代理: %s\n", *upstreamProxyFlag)
+		logger.Infof("已启用上游代理: %s", *upstreamProxyFlag)
 	} else {
 		// 即使不使用上游代理，也优化本地代理的传输设置
 		proxy.Tr = &http.Transport{
@@ -122,6 +124,12 @@ func main() {
 		if resp == nil || ctx == nil || ctx.Req == nil {
 			return resp
 		}
+		domain := extractMainDomain(ctx.Req.URL.Host)
+		if shouldSkipHost(domain) {
+			// logger.Debugf("skip host: %s", domain)
+			return resp
+		}
+
 		contentType := resp.Header.Get("Content-Type")
 		if shouldSkipContentType(contentType) {
 			return resp
@@ -195,8 +203,17 @@ var responseQueue = make(chan ResponseData, 100000)
 
 func processResponseLogs() {
 	for data := range responseQueue {
-		bodylength := max(len(data.Body), 0)
-		logger.Printf("[res] %s %s -> [%d] %d", data.Method, data.URL, data.StatusCode, bodylength)
+		matches := regexManager.MatchAll(data.Body)
+		if len(matches) > 0 {
+			for i := 0; i < len(matches); i++ {
+				m := matches[i]
+				if strings.Contains(m.GroupValues[0], `"same-origin"`) {
+					continue
+				}
+				logger.Infof("[res] %s %s -> %v", data.Method, data.URL, m.GroupValues[0])
+			}
+		}
+		// logger.Printf("[res] %s %s -> [%d] %d", data.Method, data.URL, data.StatusCode, bodylength)
 	}
 }
 func shouldSkipContentType(contentType string) bool {
@@ -216,4 +233,48 @@ func shouldSkipContentType(contentType string) bool {
 		}
 	}
 	return false
+}
+func shouldSkipHost(host string) bool {
+	skipHosts := map[string]bool{
+		"google.com":     true,
+		"gstatic.com":    true,
+		"googleapis.com": true,
+		"github.com":     true,
+		"cloudflare.com": true,
+		"gravatar.com":   true,
+		"youtube.com":    true,
+		"ytimg.com":      true,
+		"facebook.com":   true,
+		"fbcdn.net":      true,
+		"twitter.com":    true,
+		"twimg.com":      true,
+		"microsoft.com":  true,
+		"msn.com":        true,
+		"live.com":       true,
+		"akamai.net":     true,
+		"jsdelivr.net":   true,
+		"unpkg.com":      true,
+		"baidu.com":      true,
+		"csdn.net":       true,
+		"cnblogs.com":    true,
+	}
+
+	mainDomain := extractMainDomain(host)
+	return skipHosts[mainDomain]
+}
+func extractMainDomain(host string) string {
+	// 移除端口号
+	if i := strings.Index(host, ":"); i != -1 {
+		host = host[:i]
+	}
+	parts := strings.Split(host, ".")
+	length := len(parts)
+
+	// 处理无效域名
+	if length < 2 {
+		return host
+	}
+
+	// 获取主域名部分
+	return parts[length-2] + "." + parts[length-1]
 }

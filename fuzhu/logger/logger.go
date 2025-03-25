@@ -70,7 +70,7 @@ func Info(v ...interface{}) {
 }
 func Debug(v ...interface{}) {
 	msg := fmt.Sprint(v...)
-	fileLogger.Printf("%s %s DBG: %s", getFormattedTime(), getCaller(), msg)
+	// fileLogger.Printf("%s %s DBG: %s", getFormattedTime(), getCaller(), msg)
 	defaultLogger.Logger.WithCallerOffset(1).Debug(msg)
 }
 func Warn(v ...interface{}) {
@@ -101,7 +101,7 @@ func Infof(format string, v ...interface{}) {
 }
 func Debugf(format string, v ...interface{}) {
 	msg := fmt.Sprintf(format, v...)
-	fileLogger.Printf("%s %s DBG: %s", getFormattedTime(), getCaller(), msg)
+	// fileLogger.Printf("%s %s DBG: %s", getFormattedTime(), getCaller(), msg)
 	defaultLogger.Logger.WithCallerOffset(1).Debug(msg)
 }
 func Warnf(format string, v ...interface{}) {
