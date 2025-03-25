@@ -161,7 +161,7 @@ func main() {
 			}
 		}
 
-		logger.Printf("[响应] %s %s -> %d\n", ctx.Req.Method, ctx.Req.URL, resp.StatusCode)
+		logger.Printf("[res] %s %s -> %d", ctx.Req.Method, ctx.Req.URL, resp.StatusCode)
 		return resp
 	})
 
