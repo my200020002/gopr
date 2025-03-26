@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
@@ -17,6 +18,7 @@ import (
 	"gopr/fuzhu/logger"
 
 	"github.com/elazarl/goproxy"
+	"golang.org/x/net/proxy"
 )
 
 var regexManager = fuzhu.NewRegexManager()
@@ -38,8 +40,8 @@ func main() {
 	}
 	// ---初始化正则表达式管理器---
 
-	proxy := goproxy.NewProxyHttpServer()
-	proxy.Verbose = *verboseFlag
+	proxyServer := goproxy.NewProxyHttpServer()
+	proxyServer.Verbose = *verboseFlag
 
 	// 根据命令行参数配置上游代理
 	if *upstreamProxyFlag != "" {
@@ -48,15 +50,29 @@ func main() {
 			logger.Fatal("解析上游代理地址失败:", err)
 		}
 
-		proxy.Tr = &http.Transport{
+		proxyServer.Tr = &http.Transport{
 			Proxy: http.ProxyURL(upstreamProxy),
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
 			},
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				// 对于 HTTP 代理，我们需要直接使用 net.Dialer
+				dialer := &net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}
+
+				if upstreamProxy.Scheme == "http" || upstreamProxy.Scheme == "https" {
+					return dialer.DialContext(ctx, network, addr)
+				}
+
+				// 对于 SOCKS 代理
+				proxyDialer, err := proxy.FromURL(upstreamProxy, dialer)
+				if err != nil {
+					return nil, err
+				}
+				return proxyDialer.Dial(network, addr)
+			},
 			// 添加以下优化配置
 			MaxIdleConns:        1000,             // 最大空闲连接数
 			MaxIdleConnsPerHost: 100,              // 每个主机的最大空闲连接数
@@ -67,7 +83,7 @@ func main() {
 		logger.Infof("已启用上游代理: %s", *upstreamProxyFlag)
 	} else {
 		// 即使不使用上游代理，也优化本地代理的传输设置
-		proxy.Tr = &http.Transport{
+		proxyServer.Tr = &http.Transport{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
 			},
@@ -102,10 +118,10 @@ func main() {
 		logger.Fatal("解析证书失败:", err)
 	}
 	goproxy.GoproxyCa = ca
-	proxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
+	proxyServer.OnRequest().HandleConnect(goproxy.AlwaysMitm)
 
 	// 监听所有请求
-	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	proxyServer.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		// if req.Header.Get("Upgrade") == "websocket" {
 		// 	// 读取 WebSocket 请求体
 		// 	body, err := io.ReadAll(req.Body)
@@ -120,7 +136,7 @@ func main() {
 	})
 
 	// 监听所有响应
-	proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+	proxyServer.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
 		if resp == nil || ctx == nil || ctx.Req == nil {
 			return resp
 		}
@@ -189,7 +205,7 @@ func main() {
 	})
 
 	logger.Print("启动代理服务器在 :8889...")
-	logger.Fatal(http.ListenAndServe(":8889", proxy))
+	logger.Fatal(http.ListenAndServe(":8889", proxyServer))
 }
 
 type ResponseData struct {
