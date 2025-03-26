@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
@@ -18,7 +17,6 @@ import (
 	"gopr/fuzhu/logger"
 
 	"github.com/elazarl/goproxy"
-	"golang.org/x/net/proxy"
 )
 
 var regexManager = fuzhu.NewRegexManager()
@@ -55,24 +53,28 @@ func main() {
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
 			},
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				// 对于 HTTP 代理，我们需要直接使用 net.Dialer
-				dialer := &net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			// DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// 	// 对于 HTTP 代理，我们需要直接使用 net.Dialer
+			// 	dialer := &net.Dialer{
+			// 		Timeout:   30 * time.Second,
+			// 		KeepAlive: 30 * time.Second,
+			// 	}
 
-				if upstreamProxy.Scheme == "http" || upstreamProxy.Scheme == "https" {
-					return dialer.DialContext(ctx, network, addr)
-				}
+			// 	if upstreamProxy.Scheme == "http" || upstreamProxy.Scheme == "https" {
+			// 		return dialer.DialContext(ctx, network, addr)
+			// 	}
 
-				// 对于 SOCKS 代理
-				proxyDialer, err := proxy.FromURL(upstreamProxy, dialer)
-				if err != nil {
-					return nil, err
-				}
-				return proxyDialer.Dial(network, addr)
-			},
+			// 	// 对于 SOCKS 代理
+			// 	proxyDialer, err := proxy.FromURL(upstreamProxy, dialer)
+			// 	if err != nil {
+			// 		return nil, err
+			// 	}
+			// 	return proxyDialer.Dial(network, addr)
+			// },
 			// 添加以下优化配置
 			MaxIdleConns:        1000,             // 最大空闲连接数
 			MaxIdleConnsPerHost: 100,              // 每个主机的最大空闲连接数
